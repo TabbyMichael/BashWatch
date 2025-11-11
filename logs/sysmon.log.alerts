@@ -1,0 +1,4 @@
+[2025-11-10 22:42:44] ALERT: CPU usage (27.5) exceeded threshold (10%)
+[2025-11-10 22:42:44] ALERT: Memory usage (81.82%) exceeded threshold (10%)
+[2025-11-10 22:42:50] ALERT: CPU usage (19.6) exceeded threshold (10%)
+[2025-11-10 22:42:50] ALERT: Memory usage (81.84%) exceeded threshold (10%)
