@@ -26,11 +26,88 @@ load_config() {
         if [[ -r "$config_path" ]]; then
             source "$config_path"
             log_message "Configuration loaded from $config_path"
+            validate_config
         else
             error_exit "Cannot read configuration file: $config_path"
         fi
     else
         log_message "Configuration file not found, using defaults"
+    fi
+}
+
+# Function to validate configuration parameters
+validate_config() {
+    # Validate CPU_INTERVAL
+    if [[ -n "$CPU_INTERVAL" && ! "$CPU_INTERVAL" =~ ^[0-9]+$ ]]; then
+        log_message "WARNING: Invalid CPU_INTERVAL value '$CPU_INTERVAL', using default value 5"
+        CPU_INTERVAL=5
+    elif [[ -n "$CPU_INTERVAL" && "$CPU_INTERVAL" -lt 1 ]]; then
+        log_message "WARNING: CPU_INTERVAL value '$CPU_INTERVAL' is too low, using minimum value 1"
+        CPU_INTERVAL=1
+    fi
+    
+    # Validate MEMORY_INTERVAL
+    if [[ -n "$MEMORY_INTERVAL" && ! "$MEMORY_INTERVAL" =~ ^[0-9]+$ ]]; then
+        log_message "WARNING: Invalid MEMORY_INTERVAL value '$MEMORY_INTERVAL', using default value 5"
+        MEMORY_INTERVAL=5
+    elif [[ -n "$MEMORY_INTERVAL" && "$MEMORY_INTERVAL" -lt 1 ]]; then
+        log_message "WARNING: MEMORY_INTERVAL value '$MEMORY_INTERVAL' is too low, using minimum value 1"
+        MEMORY_INTERVAL=1
+    fi
+    
+    # Validate NETWORK_INTERVAL
+    if [[ -n "$NETWORK_INTERVAL" && ! "$NETWORK_INTERVAL" =~ ^[0-9]+$ ]]; then
+        log_message "WARNING: Invalid NETWORK_INTERVAL value '$NETWORK_INTERVAL', using default value 10"
+        NETWORK_INTERVAL=10
+    elif [[ -n "$NETWORK_INTERVAL" && "$NETWORK_INTERVAL" -lt 1 ]]; then
+        log_message "WARNING: NETWORK_INTERVAL value '$NETWORK_INTERVAL' is too low, using minimum value 1"
+        NETWORK_INTERVAL=1
+    fi
+    
+    # Validate CPU_THRESHOLD
+    if [[ -n "$CPU_THRESHOLD" && ! "$CPU_THRESHOLD" =~ ^[0-9]+$ ]]; then
+        log_message "WARNING: Invalid CPU_THRESHOLD value '$CPU_THRESHOLD', using default value 80"
+        CPU_THRESHOLD=80
+    elif [[ -n "$CPU_THRESHOLD" && ("$CPU_THRESHOLD" -lt 0 || "$CPU_THRESHOLD" -gt 100) ]]; then
+        log_message "WARNING: CPU_THRESHOLD value '$CPU_THRESHOLD' is out of range (0-100), using default value 80"
+        CPU_THRESHOLD=80
+    fi
+    
+    # Validate MEMORY_THRESHOLD
+    if [[ -n "$MEMORY_THRESHOLD" && ! "$MEMORY_THRESHOLD" =~ ^[0-9]+$ ]]; then
+        log_message "WARNING: Invalid MEMORY_THRESHOLD value '$MEMORY_THRESHOLD', using default value 85"
+        MEMORY_THRESHOLD=85
+    elif [[ -n "$MEMORY_THRESHOLD" && ("$MEMORY_THRESHOLD" -lt 0 || "$MEMORY_THRESHOLD" -gt 100) ]]; then
+        log_message "WARNING: MEMORY_THRESHOLD value '$MEMORY_THRESHOLD' is out of range (0-100), using default value 85"
+        MEMORY_THRESHOLD=85
+    fi
+    
+    # Validate ENABLE_* flags
+    if [[ -n "$ENABLE_CPU_MONITORING" && ! "$ENABLE_CPU_MONITORING" =~ ^(true|false)$ ]]; then
+        log_message "WARNING: Invalid ENABLE_CPU_MONITORING value '$ENABLE_CPU_MONITORING', using default value true"
+        ENABLE_CPU_MONITORING=true
+    fi
+    
+    if [[ -n "$ENABLE_MEMORY_MONITORING" && ! "$ENABLE_MEMORY_MONITORING" =~ ^(true|false)$ ]]; then
+        log_message "WARNING: Invalid ENABLE_MEMORY_MONITORING value '$ENABLE_MEMORY_MONITORING', using default value true"
+        ENABLE_MEMORY_MONITORING=true
+    fi
+    
+    if [[ -n "$ENABLE_NETWORK_MONITORING" && ! "$ENABLE_NETWORK_MONITORING" =~ ^(true|false)$ ]]; then
+        log_message "WARNING: Invalid ENABLE_NETWORK_MONITORING value '$ENABLE_NETWORK_MONITORING', using default value true"
+        ENABLE_NETWORK_MONITORING=true
+    fi
+    
+    # Validate OUTPUT_FORMAT
+    if [[ -n "$OUTPUT_FORMAT" && ! "$OUTPUT_FORMAT" =~ ^(text|json)$ ]]; then
+        log_message "WARNING: Invalid OUTPUT_FORMAT value '$OUTPUT_FORMAT', using default value text"
+        OUTPUT_FORMAT=text
+    fi
+    
+    # Validate DAEMON_MODE
+    if [[ -n "$DAEMON_MODE" && ! "$DAEMON_MODE" =~ ^(true|false)$ ]]; then
+        log_message "WARNING: Invalid DAEMON_MODE value '$DAEMON_MODE', using default value false"
+        DAEMON_MODE=false
     fi
 }
 
@@ -57,6 +134,8 @@ fi
 LOG_FILE="${LOG_FILE:-$PROJECT_DIR/logs/sysmon.log}"
 OUTPUT_FORMAT="${OUTPUT_FORMAT:-text}"
 DAEMON_MODE="${DAEMON_MODE:-false}"
+ENABLE_HISTORICAL_DATA="${ENABLE_HISTORICAL_DATA:-true}"
+LOG_ROTATION_SIZE="${LOG_ROTATION_SIZE:-10485760}"  # 10MB default
 
 # Trap for cleanup on exit
 trap cleanup EXIT
@@ -182,6 +261,35 @@ alert_message() {
     fi
 }
 
+# Function to store historical data for trend analysis
+store_historical_data() {
+    local timestamp=$(date '+%Y-%m-%d %H:%M:%S')
+    local data_file="$PROJECT_DIR/logs/sysmon_data.csv"
+    
+    # Create CSV header if file doesn't exist
+    if [[ ! -f "$data_file" ]]; then
+        echo "timestamp,cpu_usage,cpu_load_1m,cpu_load_5m,cpu_load_15m,memory_usage,memory_total,memory_used,swap_usage,network_interfaces" >> "$data_file"
+    fi
+    
+    # Get current metrics
+    local cpu_usage=$(get_cpu_usage)
+    local cpu_load=$(get_cpu_load)
+    local cpu_load_1m=$(echo "$cpu_load" | awk '{print $1}')
+    local cpu_load_5m=$(echo "$cpu_load" | awk '{print $2}')
+    local cpu_load_15m=$(echo "$cpu_load" | awk '{print $3}')
+    
+    local memory_info=$(get_memory_info)
+    local memory_used=$(echo "$memory_info" | awk '{print $1}' | sed 's/Gi//')
+    local memory_total=$(echo "$memory_info" | awk '{print $3}' | sed 's/Gi//')
+    local memory_usage=$(get_memory_usage | sed 's/%//')
+    
+    local swap_usage=$(get_swap_usage | sed 's/%//')
+    local network_interfaces=$(get_active_interfaces)
+    
+    # Append data to CSV file
+    echo "$timestamp,$cpu_usage,$cpu_load_1m,$cpu_load_5m,$cpu_load_15m,$memory_usage,$memory_total,$memory_used,$swap_usage,$network_interfaces" >> "$data_file"
+}
+
 # Function for continuous monitoring (daemon mode)
 monitor_continuous() {
     log_message "Starting continuous monitoring mode"
@@ -211,6 +319,11 @@ monitor_continuous() {
         
         if [[ "$ENABLE_NETWORK_MONITORING" == "true" ]]; then
             monitor_network
+        fi
+        
+        # Store historical data for trend analysis (if enabled)
+        if [[ "$ENABLE_HISTORICAL_DATA" == "true" ]]; then
+            store_historical_data
         fi
         
         # Check thresholds for alerts
@@ -300,6 +413,11 @@ else
     
     if [[ "$ENABLE_NETWORK_MONITORING" == "true" ]]; then
         monitor_network
+    fi
+    
+    # Store historical data for trend analysis (if enabled)
+    if [[ "$ENABLE_HISTORICAL_DATA" == "true" ]]; then
+        store_historical_data
     fi
     
     log_message "BashWatch system monitor completed"
